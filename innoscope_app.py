@@ -20,7 +20,7 @@ st.set_page_config(page_title="InnoScope POC", layout="wide", page_icon="🔭")
 # --- HEADER ---
 st.title("🔭 InnoScope")
 st.markdown("""
-**Retrieval-Augmented Decision Intelligence for Software R&D** *Powered by Google Gemini 1.5 Pro + Local Embeddings*
+**Retrieval-Augmented Decision Intelligence for Software R&D** *Powered by Google Gemini 2.5 Pro + Local Embeddings*
 """)
 
 # --- SIDEBAR: SETUP & INGESTION ---
@@ -94,9 +94,12 @@ def process_documents(uploaded_files):
 
     # Step C: Embedding & Indexing
     # USING LOCAL MODEL to avoid Google Rate Limits
-    status_text.text("Generating Embeddings (Local CPU - 'all-MiniLM-L6-v2')...")
-    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
+    status_text.text("Generating Embeddings (Local CPU - 'BAAI/bge-base-en-v1.5')...")
+    # embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    embeddings = HuggingFaceEmbeddings(
+        model_name="BAAI/bge-base-en-v1.5",
+        encode_kwargs={'normalize_embeddings': True}
+    )
     vectorstore = FAISS.from_documents(splits, embeddings)
 
     status_text.text("Ready!")
