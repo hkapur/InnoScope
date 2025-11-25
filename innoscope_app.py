@@ -60,7 +60,7 @@ def run_llm_as_a_judge(query, answer, context_text):
     """
     Uses a separate LLM call to grade the RAG output.
     """
-    judge_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", temperature=0)
+    judge_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0)
 
     judge_prompt = f"""
     You are an impartial technical judge. Evaluate the following RAG interaction.
@@ -173,7 +173,7 @@ if st.session_state.retriever:
     if query:
         # 1. LLM Setup
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-pro",
+            model="gemini-2.5-flash-lite",
             temperature=0.2,
             convert_system_message_to_human=True
         )
