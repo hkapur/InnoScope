@@ -1,0 +1,25 @@
+Security (CRITICAL)
+
+.env
+.env.local
+
+Python
+
+pycache/
+*.py[cod]
+
+Environments
+
+venv/
+.venv/
+env/
+
+IDE Settings (PyCharm/VS Code)
+
+.idea/
+.vscode/
+*.swp
+
+Local Data (Optional - if you don't want to upload your PDFs)
+
+*.pdf
