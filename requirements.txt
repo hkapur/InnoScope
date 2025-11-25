@@ -8,3 +8,4 @@ sentence-transformers
 faiss-cpu
 pymupdf
 python-dotenv
+rank_bm25
