@@ -27,7 +27,7 @@ st.set_page_config(page_title="InnoScope POC", layout="wide", page_icon="🔭")
 st.title("🔭 InnoScope")
 st.markdown("""
 **Retrieval-Augmented Decision Intelligence for Software R&D**
-*Engine: Google Gemini 2.5 Flash-Lite | Re-Ranker: BAAI Cross-Encoder | Judge: Gemini 1.5 Pro*
+*Engine: Google Gemini 2.5 Flash-Lite | Embedding: BAAI/bge-base-en-v1.5 | Re-Ranker: BAAI/bge-reranker-base | Judge: Gemini 2.5 Pro*
 """)
 
 # --- SIDEBAR: CONTROL PLANE ---
