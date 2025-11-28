@@ -27,7 +27,7 @@ st.set_page_config(page_title="InnoScope POC", layout="wide", page_icon="🔭")
 st.title("🔭 InnoScope")
 st.markdown("""
 **Retrieval-Augmented Decision Intelligence for Software R&D**
-*Engine: Google Gemini 2.5 Flash-Lite | Re-Ranker: BAAI Cross-Encoder | Judge: Gemini 2.5 Pro*
+*Engine: Google Gemini 2.5 Flash-Lite | Re-Ranker: BAAI Cross-Encoder | Judge: Gemini 1.5 Pro*
 """)
 
 # --- SIDEBAR: CONTROL PLANE ---
@@ -61,9 +61,9 @@ with st.sidebar:
 # --- COMPONENT 1: LLM-AS-A-JUDGE ---
 def run_llm_as_a_judge(query, answer, context_text):
     """
-    Uses a separate LLM call to grade the RAG output.
+    Uses a separate, powerful LLM call to grade the RAG output.
     """
-    # Judge: Uses the powerful Gemini 2.5 Pro for critical evaluation
+    # Using Gemini 2.5 Pro (Standard SOTA) for critical evaluation
     judge_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0)
 
     judge_prompt = f"""
@@ -77,7 +77,7 @@ def run_llm_as_a_judge(query, answer, context_text):
     1. Groundedness: Is the answer derived ONLY from the context provided?
     2. Completeness: Did it answer the user's specific question?
     3. Citations: Did the answer include citations (e.g., [Source: X])?
-    4. Conflict Handling: If the context contained conflicting information, did the answer acknowledge it?
+    4. Conflict Handling: If the context contained conflicting information, did the answer acknowledge it explicitly?
 
     Output a strictly formatted JSON string with these keys:
     "score": (integer 1-5),
@@ -97,8 +97,8 @@ def run_llm_as_a_judge(query, answer, context_text):
 def process_documents(uploaded_files):
     """
     1. Chunking
-    2. Hybrid Search (Retrieves Top 20)
-    3. Re-ranking (Filters to Top 5)
+    2. Hybrid Search (Retrieves Top 20 Candidates)
+    3. Re-ranking (Filters to Top 5 Best Matches)
     """
     documents = []
 
@@ -124,17 +124,18 @@ def process_documents(uploaded_files):
         progress_bar.progress((i + 1) / len(uploaded_files))
 
     # Step B: Chunking
-    status_text.text("Chunking content...")
+    status_text.text("Chunking content (1000 chars)...")
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200
     )
     splits = text_splitter.split_documents(documents)
 
-    # Step C: Base Retrievers (Wide Net)
+    # Step C: Base Retrievers (The "Broad Net")
     # We fetch k=20 documents initially to ensure we don't miss anything.
     status_text.text("Building Hybrid Index (Vector + Keyword)...")
 
+    # Vector Search (Semantic)
     embeddings = HuggingFaceEmbeddings(
         model_name="BAAI/bge-base-en-v1.5",
         encode_kwargs={'normalize_embeddings': True}
@@ -142,25 +143,29 @@ def process_documents(uploaded_files):
     vectorstore = FAISS.from_documents(splits, embeddings)
     faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 20})
 
+    # Keyword Search (Exact Match)
     bm25_retriever = BM25Retriever.from_documents(splits)
     bm25_retriever.k = 20
 
+    # Ensemble (Hybrid)
     ensemble_retriever = EnsembleRetriever(
         retrievers=[bm25_retriever, faiss_retriever],
         weights=[0.5, 0.5]
     )
 
-    # Step D: Re-ranking (Precision Filter)
+    # Step D: Re-ranking (The "Precision Filter")
     # This model reads the 20 docs and picks the best 5
     status_text.text("Loading Cross-Encoder Re-ranker (BAAI/bge-reranker-base)...")
     model = HuggingFaceCrossEncoder(model_name="BAAI/bge-reranker-base")
     compressor = CrossEncoderReranker(model=model, top_n=5)
 
+    # The Final Retriever Pipeline
     compression_retriever = ContextualCompressionRetriever(
         base_compressor=compressor,
         base_retriever=ensemble_retriever
     )
 
+    status_text.text("Ready! Hybrid Search + Re-ranking active.")
     return compression_retriever
 
 
@@ -185,7 +190,7 @@ if st.session_state.retriever:
 
     if query:
         # 1. LLM Setup (Gemini 2.0 Flash-Lite)
-        # Using Flash-Lite for generation speed/cost efficiency
+        # Using the latest Flash-Lite preview model
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash-lite",
             temperature=0.2,
@@ -240,8 +245,20 @@ if st.session_state.retriever:
             st.markdown(f"**Trust Score:** :{color}[{'★' * score}] ({score}/5)")
             st.caption(f"**Judge's Reasoning:** {grade.get('reasoning', 'No reasoning provided')}")
 
-        # --- PROVENANCE ---
+        # --- DEBUG VIEW ---
         st.markdown("---")
+        with st.expander("🛠️ Developer Mode (Inspect Data Flow)"):
+            st.subheader("1. User Query")
+            st.info(response["input"])
+
+            st.subheader("3. Retrieved Context (Input to LLM)")
+            st.caption("These are the top 5 chunks selected by the Re-ranker from the original 20 candidates.")
+            for i, doc in enumerate(response["context"]):
+                st.markdown(f"**Chunk {i + 1}** (Source: {doc.metadata.get('source_file')})")
+                st.text(doc.page_content)
+                st.divider()
+
+        # --- PROVENANCE ---
         with st.expander("🔍 View Source Evidence (Provenance)"):
             for i, doc in enumerate(response["context"]):
                 st.markdown(
