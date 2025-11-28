@@ -9,6 +9,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
+from langchain_classic.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_classic.chains.retrieval import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
@@ -24,7 +27,7 @@ st.set_page_config(page_title="InnoScope POC", layout="wide", page_icon="🔭")
 st.title("🔭 InnoScope")
 st.markdown("""
 **Retrieval-Augmented Decision Intelligence for Software R&D**
-*Engine: Gemini 2.5 Flash | Retrieval: Hybrid (Vector + Keyword) | Eval: LLM-Judge*
+*Engine: Google Gemini 2.5 Flash-Lite | Re-Ranker: BAAI Cross-Encoder | Judge: Gemini 2.5 Pro*
 """)
 
 # --- SIDEBAR: CONTROL PLANE ---
@@ -60,6 +63,7 @@ def run_llm_as_a_judge(query, answer, context_text):
     """
     Uses a separate LLM call to grade the RAG output.
     """
+    # Judge: Uses the powerful Gemini 2.5 Pro for critical evaluation
     judge_llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0)
 
     judge_prompt = f"""
@@ -73,6 +77,7 @@ def run_llm_as_a_judge(query, answer, context_text):
     1. Groundedness: Is the answer derived ONLY from the context provided?
     2. Completeness: Did it answer the user's specific question?
     3. Citations: Did the answer include citations (e.g., [Source: X])?
+    4. Conflict Handling: If the context contained conflicting information, did the answer acknowledge it?
 
     Output a strictly formatted JSON string with these keys:
     "score": (integer 1-5),
@@ -88,13 +93,12 @@ def run_llm_as_a_judge(query, answer, context_text):
         return {"score": 0, "reasoning": f"Judge Error: {str(e)}"}
 
 
-# --- COMPONENT 2: INGESTION PIPELINE (HYBRID) ---
+# --- COMPONENT 2: INGESTION PIPELINE (HYBRID + RERANK) ---
 def process_documents(uploaded_files):
     """
-    Loads PDFs, chunks them, and builds TWO retrievers:
-    1. FAISS (Vector Semantic Search)
-    2. BM25 (Keyword Exact Match)
-    Returns an EnsembleRetriever that combines both.
+    1. Chunking
+    2. Hybrid Search (Retrieves Top 20)
+    3. Re-ranking (Filters to Top 5)
     """
     documents = []
 
@@ -127,28 +131,37 @@ def process_documents(uploaded_files):
     )
     splits = text_splitter.split_documents(documents)
 
-    # Step C: Vector Indexing (Local BAAI Model)
-    status_text.text("Building Vector Index (BAAI/bge-base-en-v1.5)...")
+    # Step C: Base Retrievers (Wide Net)
+    # We fetch k=20 documents initially to ensure we don't miss anything.
+    status_text.text("Building Hybrid Index (Vector + Keyword)...")
+
     embeddings = HuggingFaceEmbeddings(
         model_name="BAAI/bge-base-en-v1.5",
         encode_kwargs={'normalize_embeddings': True}
     )
     vectorstore = FAISS.from_documents(splits, embeddings)
-    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    faiss_retriever = vectorstore.as_retriever(search_kwargs={"k": 20})
 
-    # Step D: Keyword Indexing (BM25)
-    status_text.text("Building Keyword Index (BM25)...")
     bm25_retriever = BM25Retriever.from_documents(splits)
-    bm25_retriever.k = 5
+    bm25_retriever.k = 20
 
-    # Step E: Ensemble (Hybrid)
-    status_text.text("Creating Hybrid Ensemble...")
     ensemble_retriever = EnsembleRetriever(
         retrievers=[bm25_retriever, faiss_retriever],
-        weights=[0.5, 0.5]  # Equal weight to keywords and meaning
+        weights=[0.5, 0.5]
     )
 
-    return ensemble_retriever
+    # Step D: Re-ranking (Precision Filter)
+    # This model reads the 20 docs and picks the best 5
+    status_text.text("Loading Cross-Encoder Re-ranker (BAAI/bge-reranker-base)...")
+    model = HuggingFaceCrossEncoder(model_name="BAAI/bge-reranker-base")
+    compressor = CrossEncoderReranker(model=model, top_n=5)
+
+    compression_retriever = ContextualCompressionRetriever(
+        base_compressor=compressor,
+        base_retriever=ensemble_retriever
+    )
+
+    return compression_retriever
 
 
 # --- SESSION STATE ---
@@ -156,10 +169,10 @@ if "retriever" not in st.session_state:
     st.session_state.retriever = None
 
 if process_button and uploaded_files:
-    with st.spinner("Running Hybrid Ingestion Pipeline..."):
+    with st.spinner("Running Ingestion Pipeline (This may take a minute on CPU)..."):
         try:
             st.session_state.retriever = process_documents(uploaded_files)
-            st.success(f"Indexed {len(uploaded_files)} documents using Hybrid Search.")
+            st.success(f"Indexed {len(uploaded_files)} documents with Re-ranking enabled.")
         except Exception as e:
             st.error(f"Error during ingestion: {e}")
 
@@ -171,19 +184,27 @@ if st.session_state.retriever:
                           placeholder="e.g., What are the risks of the proposed architecture?")
 
     if query:
-        # 1. LLM Setup
+        # 1. LLM Setup (Gemini 2.0 Flash-Lite)
+        # Using Flash-Lite for generation speed/cost efficiency
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash-lite",
             temperature=0.2,
             convert_system_message_to_human=True
         )
 
-        # 2. System Prompt
+        # 2. System Prompt (Conflict-Aware)
         system_prompt = (
             "You are InnoScope, an R&D research assistant. "
             "Use only the provided context to answer the decision query. "
             "You must cite your sources. Every claim should be followed by [Source: Filename, Page X]. "
-            "If the context does not contain the answer, strictly reply: 'Need more information.' "
+
+            "\n\nCRITICAL INSTRUCTION ON CONFLICTS:"
+            "If you find conflicting information in the context (e.g., Source A says X, Source B says Y):"
+            "1. Do NOT try to resolve the conflict yourself."
+            "2. Explicitly state: 'There is a conflict in the provided documents.'"
+            "3. Present both sides of the conflict with citations."
+
+            "\nIf the context does not contain the answer, strictly reply: 'Need more information.' "
             "Format the output as a professional technical brief."
             "\n\n"
             "Context:\n{context}"
@@ -200,7 +221,7 @@ if st.session_state.retriever:
         question_answer_chain = create_stuff_documents_chain(llm, prompt)
         rag_chain = create_retrieval_chain(st.session_state.retriever, question_answer_chain)
 
-        with st.spinner("Analyzing documents..."):
+        with st.spinner("Analyzing documents (Retrieving 20 -> Re-ranking to 5)..."):
             response = rag_chain.invoke({"input": query})
 
         # --- DISPLAY RESULTS ---
