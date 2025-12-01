@@ -27,7 +27,7 @@ st.set_page_config(page_title="InnoScope POC", layout="wide", page_icon="🔭")
 st.title("🔭 InnoScope")
 st.markdown("""
 **Retrieval-Augmented Decision Intelligence for Software R&D**
-*Engine: Google Gemini 2.5 Flash-Lite | Embedding: BAAI/bge-base-en-v1.5 | Re-Ranker: BAAI/bge-reranker-base | Judge: Gemini 2.5 Pro*
+\n*Engine: Google Gemini 2.5 Flash | Embedding: BAAI/bge-base-en-v1.5 | Re-Ranker: BAAI/bge-reranker-base | Judge: Gemini 2.5 Pro*
 """)
 
 # --- SIDEBAR: CONTROL PLANE ---
@@ -189,10 +189,10 @@ if st.session_state.retriever:
                           placeholder="e.g., What are the risks of the proposed architecture?")
 
     if query:
-        # 1. LLM Setup (Gemini 2.0 Flash-Lite)
-        # Using the latest Flash-Lite preview model
+        # 1. LLM Setup (Gemini 2.5 Flash)
+        # Using the latest Flash model
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash-lite",
+            model="gemini-2.5-flash",
             temperature=0.2,
             convert_system_message_to_human=True
         )
